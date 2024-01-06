@@ -12,14 +12,19 @@ library(leaflet)
 library(leaflet.extras)
 library(jsonlite)
 library(tidyverse)
+library(vroom)
+
 
 # Opening connection to pull functions from external file
 source('./Functions.R')
 
 # Pulling region code choices from external file
-choices <- read.csv("./data/choices.csv") %>%
-  pull(x) %>%
-  as.character()
+# choices <- read.csv("./data/choices.csv") %>%
+#   pull(x) %>%
+#   as.character()
+region_descriptors <- vroom("files/region_descriptors.csv", delim = ",")
+choices <- region_descriptors %>%
+  pull(FULL)
 
 # Fetching custom map tiles and adding citation
 custom_map = "https://api.mapbox.com/styles/v1/heliornis/cjboo3dac64w02srud7535eec/tiles/256/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGVsaW9ybmlzIiwiYSI6ImNqNGtjZjE1cjBoYmcycXAzbmlmNmJieGEifQ.ERz0DjQKEE1PBd7myLKwZA"
@@ -31,7 +36,7 @@ uloc = makeIcon(iconUrl = "./uloc.png", iconHeight = 25, iconWidth = 25)
 
 ### USER INTERFACE ### -------------------------------------------------------------------
 ui <- bootstrapPage(
-
+  
   # Adding dynamically updating USER LOC
   tags$script(geoloc()),
   
@@ -58,30 +63,46 @@ ui <- bootstrapPage(
                             min = 1, max = 30, value = 3, round = T)),
   
   # Adding REGION INPUT overlayed on leaflet map
-  absolutePanel(top = 1, right = 45, draggable = F,
-                selectInput("region_in", "Region Code", choices = choices,
-                            selected = "US-MA", multiple = F, width  = 130)),
-
+  # absolutePanel(top = 1, right = 45, draggable = F,
+  #               selectInput("region_in", "Region Code", choices = choices,
+  #                           selected = "Massachusetts, US", multiple = F, width  = 210)),
+  # absolutePanel(top = 1, right = 45, draggable = FALSE,
+  #               selectizeInput("region_in", "Region Code", choices = NULL,
+  #                              selected = "Massachusetts, US", multiple = FALSE, width = "210px")),
+  absolutePanel(top = 1, right = 45, draggable = FALSE,
+                selectizeInput("region_in", "Region Code", choices = NULL,
+                               multiple = FALSE, width = "210px")),
+  
   # Adding SELECT SPECIES INPUT overlayed on leaflet map
-  absolutePanel(top = 45, right = 45, width = NULL, draggable = T,
+  absolutePanel(top = 70, right = 45, width = NULL, draggable = T,
                 selectInput("species_in", "Species", choices = "",
                             selected = "", multiple = F, width  = 210)),
-
+  
   # Adding ALL SEPECIES BUTTON overlayed on leaflet map
-  conditionalPanel(condition = "input.species_in != ''", absolutePanel(top = 110, right = 45, width = NULL, draggable = T,
-                actionButton("allspp", "All species", width  = 210)))
+  conditionalPanel(condition = "input.species_in != ''", absolutePanel(top = 160, right = 45, width = NULL, draggable = T,
+                                                                       actionButton("allspp", "All species", width  = 210)))
 )
 
 
 ### SERVER ### ---------------------------------------------------------------------------
 server <- function(input, output, session) {
   
+  observe({
+    updateSelectizeInput(session, "region_in", choices = choices, server = TRUE, selected = "Massachusetts, US")
+  })
+  
   ## -------------------------------------------------------------------------------------
   # Rendering data frame from API with slider input 
   APIdata <- reactive({
     
+    # Match region name to region code
+    region_id <- region_descriptors %>%
+      filter(FULL == input$region_in) %>%
+      pull(REGION_CODE) %>%
+      as.character()
+    
     # Initial fetch of data from eBird API, with conditionals to reject errant input
-    a <- try(api2(regionCode = as.character(input$region_in), 
+    a <- try(api2(regionCode = region_id, 
                   back = as.numeric(input$slider_in)))
     if(class(a) == "try-error" ||length(a) == 0){return(NULL)}
     
@@ -142,8 +163,8 @@ server <- function(input, output, session) {
   ## -------------------------------------------------------------------------------------
   # Updating species input selection
   observeEvent({APIdata()},{
-      updateSelectInput(session, "species_in", choices = taxify(unique(APIdata()[["comName"]])), selected = "")
-    })
+    updateSelectInput(session, "species_in", choices = taxify(unique(APIdata()[["comName"]])), selected = "")
+  })
   
   ## -------------------------------------------------------------------------------------
   # Add a button to jump back to all species, tied to conditional panel
@@ -171,30 +192,37 @@ server <- function(input, output, session) {
                                "<br>", "My accuracy is:",  "<br>", acc, "meters"), 
                    group="pos") %>%
         addCircles(lng=ulng, lat=ulat, radius=0, group="pos")
-        #addCircles(lng=ulng, lat=ulat, radius=acc, group="pos")
-        #addEasyButton(easyButton(icon="fa-crosshairs", title="Locate Me",
-        #                         onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
+      #addCircles(lng=ulng, lat=ulat, radius=acc, group="pos")
+      #addEasyButton(easyButton(icon="fa-crosshairs", title="Locate Me",
+      #                         onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
     }
   })
   
   ## -------------------------------------------------------------------------------------
   # Leaflet map
   output$myMap = renderLeaflet({
-    if(is.null(APIdata()))
-    {
-      # Rendering leaflet map
-      return(leaflet() %>% addTiles(urlTemplate = custom_map, attribution = mb_attribution)) %>%
-        addSearchOSM(options = searchOSMOptions(zoom = 8)) %>%
-        setView(-19.451108, 30.479968, 2)
-    }
-    else
+
+    if(!is.null(APIdata()))
     {
       # Splitting up by review status in order to show reviewed on top
-      notReviewed = APIdata3()[APIdata3()$group == "white",]
-      accepted = APIdata3()[APIdata3()$group == "green",]
+      # notReviewed = APIdata3()[APIdata3()$group == "white",]
+      # accepted = APIdata3()[APIdata3()$group == "green",]
+      notReviewed = APIdata3()[APIdata3()$group == "white",] %>%
+        as_tibble() %>%
+        select(subId, lat, lng, date, comName, locName, checklistId, url) %>%
+        group_by(comName, checklistId) %>%
+        slice_head(n = 1) %>%
+        ungroup()
+      accepted = APIdata3()[APIdata3()$group == "green",] %>%
+        as_tibble() %>%
+        select(subId, lat, lng, date, comName, locName, checklistId, url) %>%
+        group_by(comName, checklistId) %>%
+        slice_head(n = 1) %>%
+        ungroup()
       
       # Rendering leaflet map
-      leaflet() %>% addTiles(urlTemplate = custom_map, attribution = mb_attribution) %>%
+      leaflet(options = leafletOptions(zoomDelta = 0.25, zoomSnap = 0.25)) %>% 
+        addTiles(urlTemplate = custom_map, attribution = mb_attribution) %>%
         addCircleMarkers(group = "Not reviewed", data = notReviewed, 
                          color = "#ffffff", opacity = 0.7, popup = notReviewed$url,
                          label = paste(notReviewed$comName,", ",notReviewed$date, ", ",
@@ -206,11 +234,27 @@ server <- function(input, output, session) {
         addLegend(position = "bottomright", 
                   colors = c("#ffffff", "#00FF33"), 
                   labels = c("Not reviewed", "Accepted"),
-                  title = "Legend: review status", opacity = 1) %>%
+                  title = "Review status", opacity = 1) %>%
         addLayersControl(overlayGroups = c("Not reviewed", "Accepted"), position = "bottomright")
-        #addEasyButton(easyButton(icon="fa-crosshairs", title="Locate Me",
-        #                         onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
+      #addEasyButton(easyButton(icon="fa-crosshairs", title="Locate Me",
+      #                         onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
+      
+      
     }
+    else
+    {
+      
+      
+      # Rendering leaflet map
+      return({
+        
+        leaflet(options = leafletOptions(minZoom = 0, maxZoom = 18)) %>%
+          addTiles(urlTemplate = custom_map, attribution = mb_attribution,
+                   options = tileOptions(opacity = 0))
+
+        })
+    }
+
   })
 }
 
