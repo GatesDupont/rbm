@@ -1,219 +1,164 @@
-
-# TODO:
-"Region NAME - figure out how to translate from region name input to region code"
-
-### GLOBAL SPACE ### ---------------------------------------------------------------------
-
 library(shiny)
-library(shinyjs)
-library(shinydashboard)
-library(shinythemes)
+library(tidyverse)
+library(vroom)
+library(lubridate)
+library(jsonlite)
 library(leaflet)
 library(leaflet.extras)
+library(fontawesome)
+library(httr)
 library(jsonlite)
-library(tidyverse)
-
-# Opening connection to pull functions from external file
-source('./Functions.R')
-
-# Pulling region code choices from external file
-choices <- read.csv("./data/choices.csv") %>%
-  pull(x) %>%
-  as.character()
-
-# Fetching custom map tiles and adding citation
-custom_map = "https://api.mapbox.com/styles/v1/heliornis/cjboo3dac64w02srud7535eec/tiles/256/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGVsaW9ybmlzIiwiYSI6ImNqNGtjZjE1cjBoYmcycXAzbmlmNmJieGEifQ.ERz0DjQKEE1PBd7myLKwZA"
-mb_attribution <- "© <a href='https://www.mapbox.com/map-feedback/'>Mapbox</a> © <a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> © <a href='http://ebird.org/content/ebird/about/'>eBird / Cornell Lab of Ornithology</a> © <a href='https://www.gatesdupont.com/'>Gates Dupont</a>"
-
-# Making my location icon
-uloc = makeIcon(iconUrl = "./uloc.png", iconHeight = 25, iconWidth = 25)
+source("global_functions_variables.R")
 
 
-### USER INTERFACE ### -------------------------------------------------------------------
+# ---- UI Setup ----
+
+# User interface
 ui <- bootstrapPage(
-
-  # Adding dynamically updating USER LOC
-  tags$script(geoloc()),
   
-  # Add Google Analytics data
-  tags$head(HTML(gtag())),
-  
-  # Setting THEME
-  theme = shinytheme("superhero"),
-  
-  # Setting map to FULL-SCREEN
+  # SETTINGS: map to full-screen
   tags$style(type="text/css", "html, body {width:100%;height:100%}"),
   
-  # Initializing LEAFLET output
-  leafletOutput("myMap", width="100%", height="100%"),
+  # OUTPUT: Leaflet map
+  leafletOutput("map", width = "100%", height = "100%"),
   
-  # Adding TITLE overlayed on leaflet map
+  # SETTINGS: title
   absolutePanel(top = 1, left = 50, draggable = F, 
-                h4("eBird Rarity Viewer"),
-                h6("by Gates Dupont")),
-  
-  # Adding SLIDER input overlayed on leaflet map
-  absolutePanel(bottom = 1, left = 45, draggable = F, 
-                sliderInput("slider_in", "Days Back", 
-                            min = 1, max = 30, value = 3, round = T)),
-  
-  # Adding REGION INPUT overlayed on leaflet map
-  absolutePanel(top = 1, right = 45, draggable = F,
-                selectInput("region_in", "Region Code", choices = choices,
-                            selected = "US-MA", multiple = F, width  = 130)),
+                h3("eBird Rarity Viewer"),
+                h5("by Gates Dupont")),
 
-  # Adding SELECT SPECIES INPUT overlayed on leaflet map
-  absolutePanel(top = 45, right = 45, width = NULL, draggable = T,
-                selectInput("species_in", "Species", choices = "",
-                            selected = "", multiple = F, width  = 210)),
+  # SELECT: Region code
+  absolutePanel(top = 10, right = 45, draggable = F,
+                selectizeInput("regionInput", "Region Code", 
+                               choices = NULL,
+                               width = 210,
+                               multiple = FALSE, 
+                               options = NULL)),
 
-  # Adding ALL SEPECIES BUTTON overlayed on leaflet map
-  conditionalPanel(condition = "input.species_in != ''", absolutePanel(top = 110, right = 45, width = NULL, draggable = T,
-                actionButton("allspp", "All species", width  = 210)))
+  # SELECT: Days back
+  absolutePanel(bottom = 10, left = 45, width = NULL, draggable = F,
+                sliderInput("backInput", "Days Back",
+                            min = 1, max = 30, value = 2, round = T)),
+  
+  # SELECT: Species
+  absolutePanel(top = 70, right = 45, draggable = FALSE,
+                selectInput("speciesInput", "Species", choices = c("All Species" = ""),
+                            selected = "All Species")),
+  
+  # BUTTON: Reset to all species
+  conditionalPanel(
+    condition = "input.speciesInput !== ''",
+    absolutePanel(top = 140, right = 45, draggable = FALSE,
+                  actionButton("resetSpecies", "Show All Species"))
+  )
+  
 )
 
 
-### SERVER ### ---------------------------------------------------------------------------
+# ---- Server Function ----
+
+# Server
 server <- function(input, output, session) {
   
-  ## -------------------------------------------------------------------------------------
-  # Rendering data frame from API with slider input 
-  APIdata <- reactive({
-    
-    # Initial fetch of data from eBird API, with conditionals to reject errant input
-    a <- try(api2(regionCode = as.character(input$region_in), 
-                  back = as.numeric(input$slider_in)))
-    if(class(a) == "try-error" ||length(a) == 0){return(NULL)}
-    
-    return(a)
-  })
+  # SELECTIZE
+  updateSelectizeInput(session, 'regionInput', 
+                       selected = "Massachusetts, US", 
+                       choices = region_choices, 
+                       server = TRUE)
   
-  ## -------------------------------------------------------------------------------------
-  # Separating API call and further data work
-  APIdata2 <- reactive({
+  # FETCH data
+  ebd_data_reactive <- reactive({
+    region_code <- region_name_to_code(input$regionInput)
+    back <- input$backInput
+    ebd_data <- ebd_api_fetch(api_key, region_code, back)
     
-    a <- APIdata()
-    
-    # Jittering lat/lon points to fix point overlap
-    a$lat = jitter(a$lat, amount = .001) # Amount instead of factor, data-dependent jitter
-    
-    # Changing review status from logical to numeric
-    cols <- sapply(a, is.logical)
-    a[,cols] <- lapply(a[,cols], as.numeric)
-    
-    # Initializing new date column
-    a["date"] <- format(strptime(a$obsDt, format = "%Y-%m-%d"), "%b %d")
-    
-    # Initializing new color grouping column
-    a["group"] <- NA
-    
-    # Assigning colors by review status
-    idx<-  (a$obsReviewed == F) & (a$obsValid == F)# Not reviewed
-    a$group[idx] <- "white"
-    idx<- (a$obsReviewed == F) & (a$obsValid == T) # Accepted
-    a$group[idx] <- "green"
-    idx<- (a$obsReviewed == T) & (a$obsValid == T) # Accepted
-    a$group[idx] <- "green"
-    
-    
-    # Adding url for list popups
-    a["url"] <- NA
-    a$url = sapply(a$subId, subIDurl)
-    
-    return(a)
-  })
-  
-  ## -------------------------------------------------------------------------------------
-  # Doing more to the data frame
-  APIdata3 <- reactive({
-    
-    a <- APIdata2()
-    
-    # Species search filtering
-    if(input$species_in %in% a$comName){
-      #a = subset(a, a$comName == as.character(input$species_in))
-      a = a[a$comName == as.character(input$species_in),]
-      return(a)
-    }else{return(a)}
-    
-    return(a)
-  })
-  
-  ## -------------------------------------------------------------------------------------
-  # Updating species input selection
-  observeEvent({APIdata()},{
-      updateSelectInput(session, "species_in", choices = taxify(unique(APIdata()[["comName"]])), selected = "")
-    })
-  
-  ## -------------------------------------------------------------------------------------
-  # Add a button to jump back to all species, tied to conditional panel
-  observeEvent(input$allspp,{
-    updateSelectInput(session, "species_in", selected = "") # removed choices = taxify(unique(APIdata()[["comName"]])),
-  })
-  
-  ## -------------------------------------------------------------------------------------
-  # Dynamically updating user location
-  observe({
-    if(!is.null(input$lat)){
+    if(!is.null(ebd_data)){
       
-      ulat <- input$lat
-      ulng <- input$long
-      acc <- input$accuracy
-      time <- input$time
+      # Fetch the taxonomic information
+      species_df <- ebd_data %>%
+        dplyr::select(species_code = speciesCode, comName) %>%
+        distinct()
+      species_codes <- species_df$species_code
+      taxonomy_df <- get_taxon_order(api_key, species_codes) %>%
+        arrange(taxonOrder) %>%
+        left_join(species_df, by = join_by(species_code))
+
+      # Update species selection input based on the taxonomically sorted data
+      species_choices <- taxonomy_df$comName
       
-      proxy <- leafletProxy("myMap")
+      # Update species selection input based on the fetched data
+      updateSelectInput(session, "speciesInput",
+                        choices = c("All Species" = "", species_choices),
+                        selected = "All Species")
+    } else {
       
-      proxy  %>% 
-        clearGroup(group="pos") %>% 
-        addMarkers(icon = uloc,lng=ulng, lat=ulat, label = "My Location", 
-                   popup=paste("My location is:","<br>", 
-                               ulng,"Longitude","<br>", ulat,"Latitude", 
-                               "<br>", "My accuracy is:",  "<br>", acc, "meters"), 
-                   group="pos") %>%
-        addCircles(lng=ulng, lat=ulat, radius=0, group="pos")
-        #addCircles(lng=ulng, lat=ulat, radius=acc, group="pos")
-        #addEasyButton(easyButton(icon="fa-crosshairs", title="Locate Me",
-        #                         onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
+      # Update species selection input based on the fetched data
+      updateSelectInput(session, "speciesInput", 
+                        choices = c("All Species" = "", unique(ebd_data$comName)),
+                        selected = "All Species")
+      
     }
+    
+    return(ebd_data)
   })
   
-  ## -------------------------------------------------------------------------------------
-  # Leaflet map
-  output$myMap = renderLeaflet({
-    if(is.null(APIdata()))
-    {
-      # Rendering leaflet map
-      return(leaflet() %>% addTiles(urlTemplate = custom_map, attribution = mb_attribution)) %>%
-        addSearchOSM(options = searchOSMOptions(zoom = 8)) %>%
-        setView(-19.451108, 30.479968, 2)
+  # MAP
+  output$map <- renderLeaflet({
+    
+    # Pull in the eBird data
+    ebd_data <- ebd_data_reactive()
+    
+    # Filter data if a specific species is selected
+    if (!is.null(input$speciesInput) && input$speciesInput != "") {
+      ebd_data <- ebd_data %>% filter(comName == input$speciesInput)
     }
-    else
-    {
-      # Splitting up by review status in order to show reviewed on top
-      notReviewed = APIdata3()[APIdata3()$group == "white",]
-      accepted = APIdata3()[APIdata3()$group == "green",]
+    
+    # Check if ebd_data is NULL or empty
+    if (is.null(ebd_data) || nrow(ebd_data) == 0) {
       
-      # Rendering leaflet map
-      leaflet() %>% addTiles(urlTemplate = custom_map, attribution = mb_attribution) %>%
-        addCircleMarkers(group = "Not reviewed", data = notReviewed, 
-                         color = "#ffffff", opacity = 0.7, popup = notReviewed$url,
-                         label = paste(notReviewed$comName,", ",notReviewed$date, ", ",
-                                       notReviewed$locName,sep = "")) %>%
-        addCircleMarkers(group = "Accepted", data = accepted, 
-                         color = "#00FF33", opacity = 0.7, popup = accepted$url, 
-                         label = paste(accepted$comName,", ",accepted$date, ", ", 
-                                       accepted$locName, sep = "")) %>%
+      # Return a blank map
+      return(leaflet(options = leafletOptions(zoomDelta = 0.25)) %>%
+               addProviderTiles(providers$CartoDB.Positron,
+                                options = tileOptions(opacity = 0)))
+    } else {
+      
+      # Create the leaflet map
+      leaflet(ebd_data, options = leafletOptions(zoomDelta = 0.25)) %>%
+        addProviderTiles(providers$CartoDB.Positron) %>%
+        addAwesomeMarkers(
+          lat = ~lat, lng = ~lng,
+          clusterOptions = markerClusterOptions(
+            spiderfyDistanceMultiplier = 1.5,
+            maxClusterRadius = 5, 
+            spiderfyOnMaxZoom = TRUE,
+            zoomToBoundsOnClick = FALSE),
+          icon = icons,
+          popup = ~paste("<b>", comName, "</b>", "<br>",
+                         locName, "<br>",
+                         "Most recent checklist:", create_eBird_link(link), "<br>", 
+                         "Last seen:", last_seen, "<br>",
+                         "Records:", n_records, "<br>",
+                         "Days:", n_days),
+          label = ~comName) %>%
         addLegend(position = "bottomright", 
-                  colors = c("#ffffff", "#00FF33"), 
-                  labels = c("Not reviewed", "Accepted"),
-                  title = "Legend: review status", opacity = 1) %>%
-        addLayersControl(overlayGroups = c("Not reviewed", "Accepted"), position = "bottomright")
-        #addEasyButton(easyButton(icon="fa-crosshairs", title="Locate Me",
-        #                         onClick=JS("function(btn, map){ map.locate({setView: true}); }")))
+                  colors = c("#5AA6D6", "#9AD8FB"), 
+                  labels = c("Accepted", "Awaiting review"),
+                  title = "Review status", opacity = 1) 
+      
     }
+    
   })
+  
+  # Observer for Reset Species Button
+  observeEvent(input$resetSpecies, {
+    updateSelectInput(session, "speciesInput", selected = "All Species")
+  })
+  
 }
 
-# Run the application 
+
+# ---- Shiny App Initialization ----
+
+# Pull it together!
 shinyApp(ui = ui, server = server)
 
