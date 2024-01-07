@@ -17,7 +17,7 @@ eBird Rarity Viewer is a Shiny web application designed for birders. It leverage
 
 1. Clone the repository: 
 ```bash
-git clone https://github.com/yourusername/your-repo-name.git
+git clone https://github.com/GatesDupont/rbm.git
 ```
 
 2. Open the project in RStudio.
