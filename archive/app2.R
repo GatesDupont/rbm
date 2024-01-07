@@ -8,7 +8,7 @@ library(leaflet.extras)
 library(fontawesome)
 library(httr)
 library(jsonlite)
-source("global_functions_variables.R")
+source("global_functions_variables2.R")
 
 
 # ---- UI Setup ----
@@ -27,12 +27,6 @@ ui <- bootstrapPage(
                 h3("eBird Rarity Viewer"),
                 h5("by Gates Dupont")),
   
-  # SELECT: Days back
-  absolutePanel(bottom = 10, left = 45, width = NULL, draggable = F,
-                style = "background-color: rgba(255, 255, 255, 0.75); border-radius: 5px; padding: 10px;",
-                sliderInput("backInput", "Days Back",
-                            min = 1, max = 30, value = 3, round = T)),
-
   # SELECT: Region code
   absolutePanel(top = 10, right = 45, draggable = F,
                 selectizeInput("regionInput", "Region Code", 
@@ -40,7 +34,12 @@ ui <- bootstrapPage(
                                width = 210,
                                multiple = FALSE, 
                                options = NULL)),
-
+  
+  # SELECT: Days back
+  absolutePanel(bottom = 10, left = 45, width = NULL, draggable = F,
+                sliderInput("backInput", "Days Back",
+                            min = 1, max = 30, value = 2, round = T)),
+  
   # SELECT: Species
   absolutePanel(top = 70, right = 45, draggable = FALSE,
                 selectInput("speciesInput", "Species", choices = c("All Species" = ""),
@@ -50,13 +49,7 @@ ui <- bootstrapPage(
   conditionalPanel(
     condition = "input.speciesInput !== ''",
     absolutePanel(top = 140, right = 45, draggable = FALSE,
-                  actionButton("resetSpecies", "Show All Species"))),
-  
-  # NOTE: about app loading time
-  absolutePanel(top = "auto", right = 10, bottom = 100, draggable = TRUE, 
-                style = "background-color: rgba(255, 255, 255, 0.9); padding: 5px; width: 139px; height: auto; max-height: 100px; overflow-y: auto; z-index: 1000;",
-                p("Map loading may take a few seconds; a blank screen indicates no reports."),
-                id = "notePanel"
+                  actionButton("resetSpecies", "Show All Species"))
   )
   
 )
@@ -75,21 +68,33 @@ server <- function(input, output, session) {
   
   # FETCH data
   ebd_data_reactive <- reactive({
+    
+    
+    if(input$regionInput == ""){
+      
+      updateSelectInput(session, "speciesInput",
+                        choices = c("All Species" = ""),
+                        selected = "All Species")
+      
+      return(2)
+      
+    }
+
     region_code <- region_name_to_code(input$regionInput)
     back <- input$backInput
     ebd_data <- ebd_api_fetch(api_key, region_code, back)
     
-    if(!is.null(ebd_data)){
+    if(is_tibble(ebd_data)){
       
       # Fetch the taxonomic information
       species_df <- ebd_data %>%
         dplyr::select(species_code = speciesCode, comName) %>%
         distinct()
       species_codes <- species_df$species_code
-      taxonomy_df <- get_taxon_order(species_codes) %>%
-        arrange(taxon_order) %>%
+      taxonomy_df <- get_taxon_order(api_key, species_codes) %>%
+        arrange(taxonOrder) %>%
         left_join(species_df, by = join_by(species_code))
-
+      
       # Update species selection input based on the taxonomically sorted data
       species_choices <- taxonomy_df$comName
       
@@ -97,16 +102,21 @@ server <- function(input, output, session) {
       updateSelectInput(session, "speciesInput",
                         choices = c("All Species" = "", species_choices),
                         selected = "All Species")
-    } else {
       
-      # Update species selection input based on the fetched data
-      updateSelectInput(session, "speciesInput", 
-                        choices = c("All Species" = "", unique(ebd_data$comName)),
-                        selected = "All Species")
+      return(ebd_data)
       
     }
     
-    return(ebd_data)
+    if(is.null(ebd_data)){
+      
+      updateSelectInput(session, "speciesInput",
+                        choices = c("All Species" = ""),
+                        selected = "All Species")
+      
+      return("No rarities reported")
+      
+    }
+    
   })
   
   # MAP
@@ -115,19 +125,45 @@ server <- function(input, output, session) {
     # Pull in the eBird data
     ebd_data <- ebd_data_reactive()
     
-    # Filter data if a specific species is selected
-    if (!is.null(input$speciesInput) && input$speciesInput != "") {
-      ebd_data <- ebd_data %>% filter(comName == input$speciesInput)
-    }
+    print(input$regionInput)
+    print(class(input$regionInput))
+    print(ebd_data)
+    print(class(ebd_data))
+    cat("\n\n")
     
-    # Check if ebd_data is NULL or empty
-    if (is.null(ebd_data) || nrow(ebd_data) == 0) {
+    # # No rarities in that region
+    # if(is.character(ebd_data)){
+    #   
+    #   leaflet() %>%
+    #     addProviderTiles(providers$CartoDB.Positron,
+    #                      options = tileOptions(opacity = 0)) %>%
+    #     addLabelOnlyMarkers(lng = -71.34894745998565, lat = 42.46038149269142,
+    #                         label = "No rare birds to report. Change selections.",
+    #                         labelOptions = labelOptions(noHide = TRUE,
+    #                                                     direction = 'center'))
+    #   
+    # }
+    # 
+    # # Still loading (selectize lag issue)
+    # if(is.numeric(ebd_data)){
+    #   
+    #   leaflet() %>%
+    #     addProviderTiles(providers$CartoDB.Positron,
+    #                      options = tileOptions(opacity = 0)) %>%
+    #     addLabelOnlyMarkers(lng = -71.34894745998565, lat = 42.46038149269142,
+    #                         label = "Loading...",
+    #                         labelOptions = labelOptions(noHide = TRUE,
+    #                                                     direction = 'center'))
+    #   
+    # }
+
+    # Normal operation
+    if(is_tibble(ebd_data)){
       
-      # Return a blank map
-      return(leaflet(options = leafletOptions(zoomDelta = 0.25)) %>%
-               addProviderTiles(providers$CartoDB.Positron,
-                                options = tileOptions(opacity = 0)))
-    } else {
+      # Filter data if a specific species is selected
+      if (!is.null(input$speciesInput) && input$speciesInput != "") {
+        ebd_data <- ebd_data %>% filter(comName == input$speciesInput)
+      }
       
       # Create the leaflet map
       leaflet(ebd_data, options = leafletOptions(zoomDelta = 0.25)) %>%

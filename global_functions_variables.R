@@ -132,42 +132,78 @@ ebd_api_fetch <- function(api_key, region_code, back){
 
 # ---- Get taxonomic information ----
 
-# Get taxonomic order by using the taxonomy API
-get_taxon_order <- function(api_key, species_codes) {
-  base_url <- "https://api.ebird.org/v2/ref/taxonomy/ebird"
+# Deprecated this because it was slow
+# # Get taxonomic order by using the taxonomy API
+# get_taxon_order <- function(api_key, species_codes) {
+#   base_url <- "https://api.ebird.org/v2/ref/taxonomy/ebird"
+#   
+#   # Data frame to store the results
+#   results_df <- tibble(species_code = species_codes, taxonOrder = integer(length(species_codes)))
+#   
+#   for (i in seq_along(species_codes)) {
+#     # Prepare the query with the species code and request JSON format
+#     query <- list(species = species_codes[i], fmt = "json")
+#     
+#     # Prepare the header with the API key
+#     headers <- add_headers(`X-eBirdApiToken` = api_key)
+#     
+#     # Make the API request
+#     response <- GET(url = base_url, query = query, headers)
+#     
+#     # Check if the response was successful
+#     if (response$status_code == 200) {
+#       # Parse the response as JSON
+#       species_data <- fromJSON(content(response, "text"), flatten = TRUE)
+#       
+#       # If the response is not empty, extract taxonOrder
+#       if (length(species_data) > 0 && "taxonOrder" %in% names(species_data)) {
+#         results_df$taxonOrder[i] <- species_data$taxonOrder
+#       } else {
+#         # If the response is empty or taxonOrder is not found, set taxonOrder to 0
+#         results_df$taxonOrder[i] <- 0
+#       }
+#     } else {
+#       warning(paste("Failed to retrieve data for species code:", species_codes[i]))
+#       # Set taxonOrder to 0 if the API call failed
+#       results_df$taxonOrder[i] <- 0
+#     }
+#   }
+#   
+#   return(results_df)
+# }
+
+# Define a function to get taxonomic order for given species codes
+get_taxon_order <- function(species_codes){
   
-  # Data frame to store the results
-  results_df <- tibble(species_code = species_codes, taxonOrder = integer(length(species_codes)))
+  # Read the taxonomy data from the CSV file and select required columns
+  full_taxonomy <- vroom("files/taxonomy.csv") %>%
+    select(species_code = SPECIES_CODE, taxon_order = TAXON_ORDER)
   
-  for (i in seq_along(species_codes)) {
-    # Prepare the query with the species code and request JSON format
-    query <- list(species = species_codes[i], fmt = "json")
+  # Filter the full taxonomy for the species codes provided as input
+  result <- full_taxonomy %>%
+    filter(species_code %in% species_codes)
+  
+  # Identify species codes not present in the taxonomy data
+  species_not_in_taxonomy_id <- !(species_codes %in% full_taxonomy$species_code)
+  
+  # Check if there are any missing species codes
+  if (sum(species_not_in_taxonomy_id) > 0) {
     
-    # Prepare the header with the API key
-    headers <- add_headers(`X-eBirdApiToken` = api_key)
+    # Extract the missing species codes
+    missing_species_codes <- species_codes[species_not_in_taxonomy_id]
     
-    # Make the API request
-    response <- GET(url = base_url, query = query, headers)
+    # Create a dataframe for missing species with taxon_order set to 0
+    missing_species_df <- data.frame(species_code = missing_species_codes, 
+                                     taxon_order = 0)
     
-    # Check if the response was successful
-    if (response$status_code == 200) {
-      # Parse the response as JSON
-      species_data <- fromJSON(content(response, "text"), flatten = TRUE)
-      
-      # If the response is not empty, extract taxonOrder
-      if (length(species_data) > 0 && "taxonOrder" %in% names(species_data)) {
-        results_df$taxonOrder[i] <- species_data$taxonOrder
-      } else {
-        # If the response is empty or taxonOrder is not found, set taxonOrder to 0
-        results_df$taxonOrder[i] <- 0
-      }
-    } else {
-      warning(paste("Failed to retrieve data for species code:", species_codes[i]))
-      # Set taxonOrder to 0 if the API call failed
-      results_df$taxonOrder[i] <- 0
-    }
+    # Combine the result with missing species dataframe
+    # and arrange by taxon_order
+    result <- rbind(result, missing_species_df) %>%
+      arrange(taxon_order)
   }
   
-  return(results_df)
+  # Return the final result
+  return(result)
 }
+
 
