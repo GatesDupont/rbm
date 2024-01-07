@@ -8,7 +8,15 @@ library(leaflet.extras)
 library(fontawesome)
 library(httr)
 library(jsonlite)
+library(config)
 source("global_functions_variables.R")
+
+
+# ---- Call API key ----
+
+# My API key
+config <- config::get(file = "config.yml")
+api_key <- config$ebird_api_key
 
 
 # ---- UI Setup ----

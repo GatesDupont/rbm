@@ -5,7 +5,7 @@ account: gates
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 10877213
-bundleId: 8117746
+bundleId: 8117792
 url: https://gates.shinyapps.io/rare/
 version: 1
 asMultiple: FALSE

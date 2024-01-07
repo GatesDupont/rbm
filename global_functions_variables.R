@@ -11,11 +11,6 @@ library(jsonlite)
 # Fix the mutate conflict
 mutate <- dplyr::mutate
 
-# ---- Global variables ----
-
-# My API key
-api_key <- "phvesltiq609"
-
 
 # ---- Small custom functions ----
 
