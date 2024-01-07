@@ -83,7 +83,8 @@ ebd_api_fetch <- function(api_key, region_code, back){
         fromJSON() %>%
         # Organize the data
         as_tibble() %>%
-        dplyr::select(speciesCode, comName, 
+        mutate(subname = if("subnational2Name" %in% names(.)) subnational2Name else subnational1Name) %>%
+        dplyr::select(speciesCode, comName, subname,
                locName, obsDt, lat, lng,
                obsValid, obsReviewed,
                subId) %>%
