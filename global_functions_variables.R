@@ -52,6 +52,14 @@ region_name_to_code <- function(region_name){
   return(result)
 }
 
+region_code_to_name <- function(region_code) {
+  result <- region_descriptors %>%
+    filter(REGION_CODE == region_code) %>%
+    pull(FULL) %>%
+    as.character()
+  
+  return(result)
+}
 
 
 # ---- API function ----

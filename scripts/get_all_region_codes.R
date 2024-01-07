@@ -3,8 +3,7 @@ library(vroom)
 
 
 # Read country codes
-# https://api.ebird.org/v2/ref/region/list/country/world?key=phvesltiq609&fmt=json
-countries <- vroom("files/country_codes.csv")
+countries <- vroom("https://api.ebird.org/v2/ref/region/list/country/world?key=phvesltiq609&fmt=csv")
 
 # Initialize an empty data frame
 df <- data.frame()
@@ -66,5 +65,7 @@ for(i in 1:nrow(countries)){
   
 }
 
+result <- rbind(df, countries %>% mutate(GREATER = "na", FULL = REGION_NAME))
+
 # Output
-vroom_write(df, "files/region_descriptors.csv", delim = ",")
+vroom_write(result, "files/region_descriptors.csv", delim = ",")

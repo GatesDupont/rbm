@@ -16,6 +16,9 @@ source("global_functions_variables.R")
 # User interface
 ui <- bootstrapPage(
   
+  # Enable Bookmarking
+  # enableBookmarking("url"),
+  
   # SETTINGS: map to full-screen
   tags$style(type="text/css", "html, body {width:100%;height:100%}"),
   
@@ -35,7 +38,7 @@ ui <- bootstrapPage(
 
   # SELECT: Region code
   absolutePanel(top = 10, right = 45, draggable = F,
-                selectizeInput("regionInput", "Region Code", 
+                selectizeInput("regionInput", "County, State, or Country", 
                                choices = NULL,
                                width = 210,
                                multiple = FALSE, 
@@ -130,7 +133,8 @@ server <- function(input, output, session) {
     } else {
       
       # Create the leaflet map
-      leaflet(ebd_data, options = leafletOptions(zoomDelta = 0.25)) %>%
+      # leaflet(ebd_data, options = leafletOptions(zoomDelta = 0.25, zoomControl = F)) %>%
+      leaflet(ebd_data, options = leafletOptions(zoomDelta = 0.5, zoomControl = T)) %>%
         addProviderTiles(providers$CartoDB.Positron) %>%
         addAwesomeMarkers(
           lat = ~lat, lng = ~lng,
@@ -160,6 +164,8 @@ server <- function(input, output, session) {
   observeEvent(input$resetSpecies, {
     updateSelectInput(session, "speciesInput", selected = "All Species")
   })
+  
+  # UPDATING URL
   
 }
 
