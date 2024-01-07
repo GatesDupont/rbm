@@ -17,6 +17,13 @@ source("global_functions_variables.R")
 ui <- bootstrapPage(
   
   tags$head(
+    shiny::tags$script(
+      src = "https://www.googletagmanager.com/gtag/js?id=G-PTCS8GPPYS",
+      async = ""
+    ),
+    shiny::tags$script(
+      src = "static/js/gtag.js"
+    ),
     tags$link(href="https://fonts.googleapis.com/css?family=Merriweather:400,700&display=swap", rel="stylesheet"),
     tags$style(HTML("
       html, body {
